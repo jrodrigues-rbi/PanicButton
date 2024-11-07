@@ -11,15 +11,17 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
 import android.util.Log
-import com.google.android.gms.location.*
+import com.uebrasil.panicbuttonapp.MainActivity
+import com.uebrasil.panicbuttonapp.services.location.LocationDppService
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.Priority
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
-import com.example.panicbuttonapp.MainActivity
-import android.provider.Settings
 
 class MainService : Service() {
 
@@ -27,7 +29,8 @@ class MainService : Service() {
     private lateinit var locationDppService: LocationDppService
     private var isSocketConnected = false
     private val client = OkHttpClient()
-    private val locationQueue = mutableListOf<JSONObject>() // Fila para armazenar localizações não enviadas
+    private val locationQueue =
+        mutableListOf<JSONObject>() // Fila para armazenar localizações não enviadas
     private lateinit var locationRequest: LocationRequest
     private val retryInterval = 15000L // Intervalo de reconexão
     private val handler = Handler(Looper.getMainLooper())
@@ -60,14 +63,13 @@ class MainService : Service() {
 
     private fun startWebSocketConnection() {
         val request = Request.Builder()
-            .url("ws://177.87.122.5:3000")
+            .url("ws://dpp-manager.uebr.com.br")
             .build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
                 isSocketConnected = true
                 Log.d("MainService", "WebSocket conectado com sucesso")
-                // Enviar todas as localizações armazenadas
                 sendStoredLocations()
             }
 
@@ -82,7 +84,11 @@ class MainService : Service() {
                 attemptReconnect()
             }
 
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
+            override fun onFailure(
+                webSocket: WebSocket,
+                t: Throwable,
+                response: okhttp3.Response?
+            ) {
                 isSocketConnected = false
                 Log.e("MainService", "Erro ao conectar ao WebSocket: ${t.message}")
                 attemptReconnect()
@@ -111,12 +117,14 @@ class MainService : Service() {
         val latitude = location.latitude
         val longitude = location.longitude
         val accuracy = location.accuracy
-        val speed = location.speed * 3.6 // Converte m/s para km/h
+        val speed = location.speed * 3.6
         val imei = getDeviceIdentifier();
 
-        // Verifica a acurácia e ajusta a prioridade
         if (accuracy > LOCATION_ACCURACY_THRESHOLD) {
-            Log.d("MainService", "Acurácia insuficiente, alterando para PRIORITY_BALANCED_POWER_ACCURACY.")
+            Log.d(
+                "MainService",
+                "Acurácia insuficiente, alterando para PRIORITY_BALANCED_POWER_ACCURACY."
+            )
             locationRequest.priority = Priority.PRIORITY_BALANCED_POWER_ACCURACY
         } else {
             locationRequest.priority = Priority.PRIORITY_HIGH_ACCURACY
@@ -126,21 +134,25 @@ class MainService : Service() {
         payload.put("latitude", latitude)
         payload.put("longitude", longitude)
         payload.put("speed", speed)
-        payload.put("imei", imei ?: "unknown") // Adiciona o IMEI ao payload
+        payload.put("imei", imei ?: "unknown")
 
         if (isSocketConnected) {
             webSocket.send(payload.toString())
-            Log.d("MainService", "Localização enviada: $latitude, $longitude, Acurácia: $accuracy, Velocidade: $speed km/h")
+            Log.d(
+                "MainService",
+                "Localização enviada: $latitude, $longitude, Acurácia: $accuracy, Velocidade: $speed km/h"
+            )
         } else {
             Log.e("MainService", "WebSocket não está conectado. Armazenando a localização.")
-            locationQueue.add(payload) // Armazena o JSON para envio posterior
+            locationQueue.add(payload)
             attemptReconnect()
         }
     }
 
     private fun startForegroundService() {
         val notificationIntent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE)
+        val pendingIntent =
+            PendingIntent.getActivity(this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE)
 
         val notification: Notification = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Serviço de Atualização de Localização")
